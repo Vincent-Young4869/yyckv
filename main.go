@@ -2,22 +2,28 @@ package main
 
 import (
 	"flag"
+	"strings"
+	"yyckv/kv"
+	raftModel "yyckv/raft/models"
 )
 
 //TIP To run your code, right-click the code and select <b>Run</b>. Alternatively, click
 // the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.
 
 func main() {
-	kvport := flag.Int("port", 9121, "key-value server port")
+	cluster := flag.String("cluster", "http://127.0.0.1:9000", "comma separated cluster peers")
+	id := flag.Int("id", 1, "node ID")
+	kvport := flag.Int("port", 9000, "key-value server port")
+	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
 
-	proposeC := make(chan string)
-	defer close(proposeC)
+	confChangeC := make(chan raftModel.ConfChange)
+	defer close(confChangeC)
 
-	errorC := make(chan error)
-	defer close(errorC)
+	errorC := kv.NewRaftNode(*id, strings.Split(*cluster, ","), *join, confChangeC)
+	kvStore := kv.NewKVStore(errorC)
 
-	serveHTTPKVAPI(*kvport, errorC)
+	serveHTTPKVAPI(kvStore, *kvport, errorC)
 }
 
 //TIP See GoLand help at <a href="https://www.jetbrains.com/help/go/">jetbrains.com/help/go/</a>.

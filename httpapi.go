@@ -6,21 +6,24 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+
+	"yyckv/kv"
 )
 
 // Handler for a http based key-value store backed by raft
 type httpKVAPI struct {
 	// TODO: include the kv storage, raft node config, etc.
+	kv *kv.Kvstore
 }
 
 func (h *httpKVAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	router := mux.NewRouter()
-	router.HandleFunc("/data/{key}", h.handleData).Methods(http.MethodPut, http.MethodGet, http.MethodDelete)
-	router.HandleFunc("/node", h.handleNode).Methods(http.MethodPost, http.MethodDelete)
+	router.HandleFunc("/data/{key}", h.handleDataRequest).Methods(http.MethodPut, http.MethodGet, http.MethodDelete)
+	router.HandleFunc("/node/{id}", h.handleNodeRequest).Methods(http.MethodPost, http.MethodDelete)
 	router.ServeHTTP(w, r)
 }
 
-func (h *httpKVAPI) handleData(w http.ResponseWriter, r *http.Request) {
+func (h *httpKVAPI) handleDataRequest(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	key := vars["key"]
 
@@ -37,22 +40,32 @@ func (h *httpKVAPI) handleData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *httpKVAPI) handleNode(w http.ResponseWriter, r *http.Request) {
+func (h *httpKVAPI) handleNodeRequest(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid node ID", http.StatusBadRequest)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPost:
-		fmt.Println("new node adding")
+		fmt.Printf("new node %d adding", id)
 		// ... POST logic
 	case http.MethodDelete:
-		fmt.Println("node removing")
+		fmt.Printf("node %d removing", id)
 		// ... DELETE logic
 	}
 }
 
 // serveHTTPKVAPI starts a key-value server with a GET/PUT API and listens.
-func serveHTTPKVAPI(port int, errorC <-chan error) {
+func serveHTTPKVAPI(kvStore *kv.Kvstore, port int, errorC <-chan error) {
 	srv := http.Server{
-		Addr:    ":" + strconv.Itoa(port),
-		Handler: &httpKVAPI{},
+		Addr: ":" + strconv.Itoa(port),
+		Handler: &httpKVAPI{
+			kv: kvStore,
+		},
 	}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
