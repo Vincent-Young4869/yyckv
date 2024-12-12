@@ -4,7 +4,7 @@ import (
 	"flag"
 	"strings"
 	"yyckv/kv"
-	raftModel "yyckv/raft/models"
+	"yyckv/raft/raftpb"
 )
 
 //TIP To run your code, right-click the code and select <b>Run</b>. Alternatively, click
@@ -17,7 +17,7 @@ func main() {
 	join := flag.Bool("join", false, "join an existing cluster")
 	flag.Parse()
 
-	confChangeC := make(chan raftModel.ConfChange)
+	confChangeC := make(chan raftpb.ConfChange)
 	defer close(confChangeC)
 
 	errorC := kv.NewRaftNode(*id, strings.Split(*cluster, ","), *join, confChangeC)
