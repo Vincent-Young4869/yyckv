@@ -6,10 +6,8 @@ import (
 	"errors"
 	"go.uber.org/zap"
 	"io"
-	"log"
 	"runtime"
 	"sync"
-	"time"
 	raftModel "yyckv/raft/models"
 	"yyckv/raft/raftpb"
 )
@@ -78,10 +76,9 @@ func (p *pipeline) handle() {
 	for {
 		select {
 		case m := <-p.msgc:
-			start := time.Now()
+			//start := time.Now()
 			err := p.post(raftpb.MustMarshal(&m))
-			end := time.Now()
-			log.Printf("pipline post: start time: %v, end time: %v", start, end)
+			//end := time.Now()
 
 			if err != nil {
 				p.status.deactivate(failureType{source: pipelineMsg, action: "write"}, err.Error())

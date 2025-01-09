@@ -195,6 +195,15 @@ func (n *node) run() {
 		}
 
 		select {
+		//case pm := <-propc:
+		case m := <-n.recvc:
+			if IsResponseMsg(m.Type) && !IsLocalMsgTarget(m.From) && r.trk.Progress[m.From] == nil {
+				// Filter out response message from unknown From.
+				break
+			}
+			r.Step(m)
+		case cc := <-n.confc:
+			r.logger.Infof("TODO: cc := <-n.confc...", cc)
 		case <-n.tickc:
 			n.rn.Tick()
 		case readyc <- rd:

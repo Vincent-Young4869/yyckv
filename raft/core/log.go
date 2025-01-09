@@ -174,6 +174,16 @@ func (u *unstable) mustCheckOutOfBounds(lo, hi uint64) {
 	}
 }
 
+// isUpToDate determines if the given (lastIndex,term) log is more up-to-date
+// by comparing the index and term of the last entries in the existing logs.
+// If the logs have last entries with different terms, then the log with the
+// later term is more up-to-date. If the logs end with the same term, then
+// whichever log has the larger lastIndex is more up-to-date. If the logs are
+// the same, the given log is up-to-date.
+func (l *raftLog) isUpToDate(lasti, term uint64) bool {
+	return term > l.lastTerm() || (term == l.lastTerm() && lasti >= l.lastIndex())
+}
+
 func (l *raftLog) maybeCommit(maxIndex, term uint64) bool {
 	// NB: term should never be 0 on a commit because the leader campaigns at
 	// least at term 1. But if it is 0 for some reason, we don't want to consider
