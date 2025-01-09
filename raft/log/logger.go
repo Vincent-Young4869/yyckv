@@ -38,7 +38,7 @@ func ResetDefaultLogger() {
 	SetLogger(defaultLogger)
 }
 
-func getLogger() Logger {
+func GetLogger() Logger {
 	raftLoggerMu.Lock()
 	defer raftLoggerMu.Unlock()
 	return raftLogger

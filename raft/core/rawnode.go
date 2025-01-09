@@ -101,11 +101,67 @@ func (rn *RawNode) readyWithoutAccept() Ready {
 	}
 
 	// TODO
+	if rn.asyncStorageWrites {
+		// If async storage writes are enabled, enqueue messages to
+		// local storage threads, where applicable.
+		//if needStorageAppendMsg(r, rd) {
+		//	m := newStorageAppendMsg(r, rd)
+		//	rd.Messages = append(rd.Messages, m)
+		//}
+		//if needStorageApplyMsg(rd) {
+		//	m := newStorageApplyMsg(r, rd)
+		//	rd.Messages = append(rd.Messages, m)
+		//}
+	} else {
+		// If async storage writes are disabled, immediately enqueue
+		// msgsAfterAppend to be sent out. The Ready struct contract
+		// mandates that Messages cannot be sent until after Entries
+		// are written to stable storage.
+		for _, m := range r.msgsAfterAppend {
+			if m.To != r.id {
+				rd.Messages = append(rd.Messages, m)
+			}
+		}
+	}
 	return rd
 }
 
 func (rn *RawNode) acceptReady(rd Ready) {
-	// TODO
+	//if rd.SoftState != nil {
+	//	rn.prevSoftSt = rd.SoftState
+	//}
+	//if !IsEmptyHardState(rd.HardState) {
+	//	rn.prevHardSt = rd.HardState
+	//}
+	//if len(rd.ReadStates) != 0 {
+	//	rn.raft.readStates = nil
+	//}
+	if !rn.asyncStorageWrites {
+		if len(rn.stepsOnAdvance) != 0 {
+			rn.raft.logger.Panicf("two accepted Ready structs without call to Advance")
+		}
+		for _, m := range rn.raft.msgsAfterAppend {
+			if m.To == rn.raft.id {
+				rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
+			}
+		}
+		//if needStorageAppendRespMsg(rn.raft, rd) {
+		//	m := newStorageAppendRespMsg(rn.raft, rd)
+		//	rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
+		//}
+		//if needStorageApplyRespMsg(rd) {
+		//	m := newStorageApplyRespMsg(rn.raft, rd.CommittedEntries)
+		//	rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
+		//}
+	}
+	rn.raft.msgs = nil
+	rn.raft.msgsAfterAppend = nil
+	//rn.raft.raftLog.acceptUnstable()
+	if len(rd.CommittedEntries) > 0 {
+		//ents := rd.CommittedEntries
+		//index := ents[len(ents)-1].Index
+		//rn.raft.raftLog.acceptApplying(index, entsSize(ents), rn.applyUnstableEntries())
+	}
 }
 
 func (rn *RawNode) Advance(_ Ready) {

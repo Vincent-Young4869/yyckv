@@ -57,6 +57,9 @@ func NewRaftNode(id int, peers []string, join bool, confChangeC <-chan raftpb.Co
 }
 
 func (rn *raftNode) startRaft() {
+	//oldwal := wal.Exist(rn.waldir)
+	oldwal := false
+
 	rpeers := make([]raftCore.Peer, len(rn.peers))
 	for i := range rpeers {
 		// TODO: replcae the "hardcode" with the actual peer ID
@@ -70,6 +73,12 @@ func (rn *raftNode) startRaft() {
 		MaxSizePerMsg:             1024 * 1024,
 		MaxInflightMsgs:           256,
 		MaxUncommittedEntriesSize: 1 << 30,
+	}
+
+	if oldwal || rn.join {
+		rn.node = raftCore.RestartNode(c)
+	} else {
+		rn.node = raftCore.StartNode(c, rpeers)
 	}
 
 	rn.node = raftCore.StartNode(c, rpeers)

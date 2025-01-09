@@ -1,8 +1,11 @@
 package tracker
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"yyckv/raft/core/quorum"
+	pb "yyckv/raft/raftpb"
 )
 
 // Config reflects the configuration tracked in a ProgressTracker.
@@ -14,6 +17,21 @@ type Config struct {
 	Learners map[uint64]struct{}
 
 	LearnersNext map[uint64]struct{}
+}
+
+func (c Config) String() string {
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "voters=%s", c.Voters)
+	if c.Learners != nil {
+		fmt.Fprintf(&buf, " learners=%s", quorum.MajorityConfig(c.Learners).String())
+	}
+	if c.LearnersNext != nil {
+		fmt.Fprintf(&buf, " learners_next=%s", quorum.MajorityConfig(c.LearnersNext).String())
+	}
+	if c.AutoLeave {
+		fmt.Fprint(&buf, " autoleave")
+	}
+	return buf.String()
 }
 
 // Clone returns a copy of the Config that shares no memory with the original.
@@ -47,6 +65,36 @@ type ProgressTracker struct {
 
 	MaxInflight      int
 	MaxInflightBytes uint64
+}
+
+// MakeProgressTracker initializes a ProgressTracker.
+func MakeProgressTracker(maxInflight int, maxBytes uint64) ProgressTracker {
+	p := ProgressTracker{
+		MaxInflight:      maxInflight,
+		MaxInflightBytes: maxBytes,
+		Config: Config{
+			Voters: quorum.JointConfig{
+				quorum.MajorityConfig{},
+				nil, // only populated when used
+			},
+			Learners:     nil, // only populated when used
+			LearnersNext: nil, // only populated when used
+		},
+		Votes:    map[uint64]bool{},
+		Progress: map[uint64]*Progress{},
+	}
+	return p
+}
+
+// ConfState returns a ConfState representing the active configuration.
+func (p *ProgressTracker) ConfState() pb.ConfState {
+	return pb.ConfState{
+		Voters:         p.Voters[0].Slice(),
+		VotersOutgoing: p.Voters[1].Slice(),
+		Learners:       quorum.MajorityConfig(p.Learners).Slice(),
+		LearnersNext:   quorum.MajorityConfig(p.LearnersNext).Slice(),
+		AutoLeave:      p.AutoLeave,
+	}
 }
 
 // Visit invokes the supplied closure for all tracked progresses in stable order.
@@ -83,6 +131,13 @@ func (p *ProgressTracker) VoterNodes() []uint64 {
 	return nodes
 }
 
+// Committed returns the largest log index known to be committed based on what
+// the voting members of the group have acknowledged.
+func (p *ProgressTracker) Committed() uint64 {
+	return 0
+	//return uint64(p.Voters.CommittedIndex(matchAckIndexer(p.Progress)))
+}
+
 func insertionSort(sl []uint64) {
 	a, b := 0, len(sl)
 	for i := a + 1; i < b; i++ {
@@ -90,4 +145,43 @@ func insertionSort(sl []uint64) {
 			sl[j], sl[j-1] = sl[j-1], sl[j]
 		}
 	}
+}
+
+// ResetVotes prepares for a new round of vote counting via recordVote.
+func (p *ProgressTracker) ResetVotes() {
+	p.Votes = map[uint64]bool{}
+}
+
+// RecordVote records that the node with the given id voted for this Raft
+// instance if v == true (and declined it otherwise).
+func (p *ProgressTracker) RecordVote(id uint64, v bool) {
+	_, ok := p.Votes[id]
+	if !ok {
+		p.Votes[id] = v
+	}
+}
+
+// TallyVotes returns the number of granted and rejected Votes, and whether the
+// election outcome is known.
+func (p *ProgressTracker) TallyVotes() (granted int, rejected int, _ quorum.VoteResult) {
+	// Make sure to populate granted/rejected correctly even if the Votes slice
+	// contains members no longer part of the configuration. This doesn't really
+	// matter in the way the numbers are used (they're informational), but might
+	// as well get it right.
+	for id, pr := range p.Progress {
+		if pr.IsLearner {
+			continue
+		}
+		v, voted := p.Votes[id]
+		if !voted {
+			continue
+		}
+		if v {
+			granted++
+		} else {
+			rejected++
+		}
+	}
+	result := p.Voters.VoteResult(p.Votes)
+	return granted, rejected, result
 }

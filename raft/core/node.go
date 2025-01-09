@@ -101,7 +101,7 @@ func setupNode(c *Config, peers []Peer) *node {
 	if err != nil {
 		panic(err)
 	}
-	//err = rn.Bootstrap(peers)
+	err = rn.Bootstrap(peers)
 	if err != nil {
 		c.Logger.Warningf("error occurred during starting a new node: %v", err)
 	}
@@ -114,6 +114,16 @@ func StartNode(c *Config, peers []Peer) Node {
 	n := setupNode(c, peers)
 	go n.run()
 	return n
+}
+
+func RestartNode(c *Config) Node {
+	rn, err := NewRawNode(c)
+	if err != nil {
+		panic(err)
+	}
+	n := newNode(rn)
+	go n.run()
+	return &n
 }
 
 type msgWithResult struct {

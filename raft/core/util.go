@@ -1,6 +1,9 @@
 package core
 
-import pb "yyckv/raft/raftpb"
+import (
+	"fmt"
+	pb "yyckv/raft/raftpb"
+)
 
 var isLocalMsg = [...]bool{
 	pb.MsgHup:               true,
@@ -36,6 +39,17 @@ func isMsgInArray(msgt pb.MessageType, arr []bool) bool {
 
 func IsLocalMsgTarget(id uint64) bool {
 	return id == LocalAppendThread || id == LocalApplyThread
+}
+
+func voteRespMsgType(msgt pb.MessageType) pb.MessageType {
+	switch msgt {
+	case pb.MsgVote:
+		return pb.MsgVoteResp
+	case pb.MsgPreVote:
+		return pb.MsgPreVoteResp
+	default:
+		panic(fmt.Sprintf("not a vote message: %s", msgt))
+	}
 }
 
 func IsResponseMsg(msgt pb.MessageType) bool {

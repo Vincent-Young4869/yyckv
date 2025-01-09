@@ -58,12 +58,14 @@ func (m *MemoryStorage) Term(i uint64) (uint64, error) {
 
 func (m *MemoryStorage) LastIndex() (uint64, error) {
 	//TODO implement me
-	panic("implement me")
+	//panic("implement me")
+	return 0, nil
 }
 
 func (m *MemoryStorage) FirstIndex() (uint64, error) {
 	//TODO implement me
-	panic("implement me")
+	//panic("implement me")
+	return 0, nil
 }
 
 func (m *MemoryStorage) Snapshot() (pb.Snapshot, error) {
