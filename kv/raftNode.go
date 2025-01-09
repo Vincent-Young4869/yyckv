@@ -81,8 +81,6 @@ func (rn *raftNode) startRaft() {
 		rn.node = raftCore.StartNode(c, rpeers)
 	}
 
-	rn.node = raftCore.StartNode(c, rpeers)
-
 	rn.transport = &raftHttp.Transport{
 		Logger:    rn.logger,
 		ID:        raftModel.ID(rn.id),

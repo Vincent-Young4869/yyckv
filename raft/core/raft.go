@@ -29,6 +29,9 @@ const (
 	LocalApplyThread uint64 = math.MaxUint64 - 1
 )
 
+// StateType represents the role of a node in a cluster.
+type StateType uint64
+
 // Possible values for StateType.
 const (
 	StateFollower StateType = iota
@@ -37,6 +40,8 @@ const (
 	StatePreCandidate
 	numStates
 )
+
+type CampaignType string
 
 // Possible values for CampaignType
 const (
@@ -71,11 +76,6 @@ func (r *lockedRand) Intn(n int) int {
 }
 
 var globalRand = &lockedRand{}
-
-type CampaignType string
-
-// StateType represents the role of a node in a cluster.
-type StateType uint64
 
 var stmap = [...]string{
 	"StateFollower",
