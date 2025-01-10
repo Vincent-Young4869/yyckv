@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"sync"
 	"time"
+	logger "yyckv/raft/log"
 	raftModel "yyckv/raft/models"
 )
 
@@ -25,7 +26,7 @@ type peerStatus struct {
 
 func newPeerStatus(lg *zap.Logger, local, id raftModel.ID) *peerStatus {
 	if lg == nil {
-		lg = zap.NewNop()
+		lg = logger.CreateZapLogger()
 	}
 	return &peerStatus{lg: lg, local: local, id: id}
 }

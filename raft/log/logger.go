@@ -2,11 +2,45 @@ package log
 
 import (
 	"fmt"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"io"
 	"log"
 	"os"
 	"sync"
 )
+
+// globalLogLevel holds the configured log level
+var globalLogLevel zap.AtomicLevel
+
+func InitLoggerLevel(loggingLevel string) {
+	// Initialize globalLogLevel with a default level
+	globalLogLevel = zap.NewAtomicLevel()
+	switch loggingLevel {
+	case "error":
+		globalLogLevel.SetLevel(zap.ErrorLevel)
+	case "warn":
+		globalLogLevel.SetLevel(zap.WarnLevel)
+	case "debug":
+		globalLogLevel.SetLevel(zap.DebugLevel)
+	case "info":
+	default:
+		globalLogLevel.SetLevel(zap.InfoLevel)
+	}
+}
+
+func CreateZapLogger() *zap.Logger {
+	config := zap.NewDevelopmentEncoderConfig()
+	// Use a single space as the separator
+	config.ConsoleSeparator = " "
+	config.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000")
+
+	return zap.New(zapcore.NewCore(
+		zapcore.NewConsoleEncoder(config),
+		zapcore.AddSync(os.Stdout),
+		globalLogLevel,
+	))
+}
 
 type Logger interface {
 	Debug(v ...interface{})

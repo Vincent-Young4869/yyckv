@@ -4,6 +4,7 @@ import (
 	"flag"
 	"strings"
 	"yyckv/kv"
+	logger "yyckv/raft/log"
 	"yyckv/raft/raftpb"
 )
 
@@ -15,7 +16,10 @@ func main() {
 	id := flag.Int("id", 1, "node ID")
 	kvport := flag.Int("port", 9000, "key-value server port")
 	join := flag.Bool("join", false, "join an existing cluster")
+	loggingLevel := flag.String("loggingLevel", "debug", "log level")
 	flag.Parse()
+
+	logger.InitLoggerLevel(*loggingLevel)
 
 	confChangeC := make(chan raftpb.ConfChange)
 	defer close(confChangeC)

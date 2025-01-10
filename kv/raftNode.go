@@ -9,6 +9,7 @@ import (
 	"time"
 	raftCore "yyckv/raft/core"
 	raftHttp "yyckv/raft/http"
+	logger "yyckv/raft/log"
 	raftModel "yyckv/raft/models"
 	"yyckv/raft/raftpb"
 )
@@ -50,7 +51,7 @@ func NewRaftNode(id int, peers []string, join bool, confChangeC <-chan raftpb.Co
 		httpstopc: make(chan struct{}),
 		httpdonec: make(chan struct{}),
 
-		logger: zap.NewExample(),
+		logger: logger.CreateZapLogger(),
 	}
 	go rn.startRaft()
 	return errorC

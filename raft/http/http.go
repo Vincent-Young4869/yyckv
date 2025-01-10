@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	logger "yyckv/raft/log"
 	raftModel "yyckv/raft/models"
 	"yyckv/raft/raftpb"
 	"yyckv/raft/utils"
@@ -62,7 +63,8 @@ func newPipelineHandler(t *Transport, r Raft, cid raftModel.ID) http.Handler {
 		cid:     cid,
 	}
 	if h.lg == nil {
-		h.lg = zap.NewNop()
+		//h.lg = zap.NewNop()
+		h.lg = logger.CreateZapLogger()
 	}
 	return h
 }
@@ -155,7 +157,7 @@ func newStreamHandler(t *Transport, pg peerGetter, r Raft, id, cid raftModel.ID)
 		cid:        cid,
 	}
 	if h.lg == nil {
-		h.lg = zap.NewNop()
+		h.lg = logger.CreateZapLogger()
 	}
 	return h
 }
