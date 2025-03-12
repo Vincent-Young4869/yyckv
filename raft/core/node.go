@@ -345,6 +345,7 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		return ErrStopped
 	}
 	select {
+	// if wait=true, it will block until there's result written into this channel
 	case err := <-pm.result:
 		if err != nil {
 			return err
