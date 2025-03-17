@@ -14,6 +14,11 @@ import (
 	"yyckv/raft/raftpb"
 )
 
+type commit struct {
+	data       []string
+	applyDoneC chan<- struct{}
+}
+
 // A key-value stream backed by raft
 type raftNode struct {
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
@@ -37,7 +42,10 @@ type raftNode struct {
 	logger *zap.Logger
 }
 
-func NewRaftNode(id int, peers []string, join bool, confChangeC <-chan raftpb.ConfChange) <-chan error {
+func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, error),
+	proposeC <-chan string, confChangeC <-chan raftpb.ConfChange,
+) (<-chan *commit, <-chan error, <-chan *snap.Snapshotter) {
+	commitC := make(chan *commit)
 	errorC := make(chan error)
 
 	rn := &raftNode{
@@ -54,7 +62,7 @@ func NewRaftNode(id int, peers []string, join bool, confChangeC <-chan raftpb.Co
 		logger: logger.CreateZapLogger(),
 	}
 	go rn.startRaft()
-	return errorC
+	return commitC, errorC, nil
 }
 
 func (rn *raftNode) startRaft() {

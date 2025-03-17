@@ -21,13 +21,17 @@ func main() {
 
 	logger.InitLoggerLevel(*loggingLevel)
 
+	proposeC := make(chan string)
+	defer close(proposeC)
 	confChangeC := make(chan raftpb.ConfChange)
 	defer close(confChangeC)
 
-	errorC := kv.NewRaftNode(*id, strings.Split(*cluster, ","), *join, confChangeC)
-	kvStore := kv.NewKVStore(errorC)
+	var kvs *kv.Kvstore
+	getSnapshot := func() ([]byte, error) { return kvs.GetSnapshot() }
+	commitC, errorC, snapshotterReady := kv.NewRaftNode(*id, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
+	kvs = kv.NewKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 
-	serveHTTPKVAPI(kvStore, *kvport, errorC)
+	serveHTTPKVAPI(kvs, *kvport, errorC)
 }
 
 //TIP See GoLand help at <a href="https://www.jetbrains.com/help/go/">jetbrains.com/help/go/</a>.
