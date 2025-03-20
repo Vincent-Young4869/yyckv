@@ -12,6 +12,7 @@ import (
 	logger "yyckv/raft/log"
 	raftModel "yyckv/raft/models"
 	"yyckv/raft/raftpb"
+	"yyckv/raft/snap"
 )
 
 type commit struct {
@@ -21,7 +22,9 @@ type commit struct {
 
 // A key-value stream backed by raft
 type raftNode struct {
+	proposeC    <-chan string            // proposed messages (k,v)
 	confChangeC <-chan raftpb.ConfChange // proposed cluster config changes
+	commitC     chan<- *commit           // entries committed to log (k,v)
 	errorC      chan<- error             // errors from raft session
 
 	id    int      // client ID for raft session
@@ -107,7 +110,7 @@ func (rn *raftNode) startRaft() {
 		}
 	}
 
-	go rn.serveRaft()
+	go rn.serveRaftHttp()
 	go rn.serveChannels()
 }
 
@@ -116,17 +119,31 @@ func (rn *raftNode) serveChannels() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
+	// send proposals over raft
 	go func() {
-		for rn.confChangeC != nil {
+		confChangeCount := uint64(0)
+
+		for rn.proposeC != nil && rn.confChangeC != nil {
 			select {
+			case prop, ok := <-rn.proposeC:
+				if !ok {
+					rn.proposeC = nil
+				} else {
+					// blocks until accepted by raft state machine
+					rn.node.Propose(context.TODO(), []byte(prop))
+				}
+
 			case cc, ok := <-rn.confChangeC:
 				if !ok {
 					rn.confChangeC = nil
 				} else {
+					confChangeCount++
+					cc.ID = confChangeCount
 					rn.node.ProposeConfChange(context.TODO(), cc)
 				}
 			}
 		}
+		// client closed channel; shutdown raft if not already
 		close(rn.stopc)
 	}()
 
@@ -147,7 +164,7 @@ func (rn *raftNode) serveChannels() {
 	}
 }
 
-func (rc *raftNode) serveRaft() {
+func (rc *raftNode) serveRaftHttp() {
 	url, err := url.Parse(rc.peers[rc.id-1])
 	if err != nil {
 		log.Fatalf("kvRaftNode: Failed parsing URL (%v)", err)

@@ -613,15 +613,15 @@ func (r *raft) becomePreCandidate() {
 func stepFollower(r *raft, m pb.Message) error {
 	switch m.Type {
 	case pb.MsgProp:
-		//if r.lead == None {
-		//	r.logger.Infof("%x no leader at term %d; dropping proposal", r.id, r.Term)
-		//	return ErrProposalDropped
-		//} else if r.disableProposalForwarding {
-		//	r.logger.Infof("%x not forwarding to leader %x at term %d; dropping proposal", r.id, r.lead, r.Term)
-		//	return ErrProposalDropped
-		//}
-		//m.To = r.lead
-		//r.send(m)
+		if r.lead == None {
+			r.logger.Infof("%x no leader at term %d; dropping proposal", r.id, r.Term)
+			return ErrProposalDropped
+		} else if r.disableProposalForwarding {
+			r.logger.Infof("%x not forwarding to leader %x at term %d; dropping proposal", r.id, r.lead, r.Term)
+			return ErrProposalDropped
+		}
+		m.To = r.lead
+		r.send(m)
 	case pb.MsgApp:
 		//r.electionElapsed = 0
 		//r.lead = m.From
@@ -776,6 +776,64 @@ func stepLeader(r *raft, m pb.Message) error {
 	case pb.MsgCheckQuorum:
 		return nil
 	case pb.MsgProp:
+		if len(m.Entries) == 0 {
+			r.logger.Panicf("%x stepped empty MsgProp", r.id)
+		}
+		if r.trk.Progress[r.id] == nil {
+			// If we are not currently a member of the range (i.e. this node
+			// was removed from the configuration while serving as leader),
+			// drop any new proposals.
+			return ErrProposalDropped
+		}
+		if r.leadTransferee != None {
+			r.logger.Debugf("%x [term %d] transfer leadership to %x is in progress; dropping proposal", r.id, r.Term, r.leadTransferee)
+			return ErrProposalDropped
+		}
+
+		for i := range m.Entries {
+			e := &m.Entries[i]
+			var cc pb.ConfChangeI
+			if e.Type == pb.EntryConfChange {
+				var ccc pb.ConfChange
+				if err := ccc.Unmarshal(e.Data); err != nil {
+					panic(err)
+				}
+				cc = ccc
+			} else if e.Type == pb.EntryConfChangeV2 {
+				var ccc pb.ConfChangeV2
+				if err := ccc.Unmarshal(e.Data); err != nil {
+					panic(err)
+				}
+				cc = ccc
+			}
+			if cc != nil {
+				alreadyPending := r.pendingConfIndex > r.raftLog.applied
+				alreadyJoint := len(r.trk.Config.Voters[1]) > 0
+				wantsLeaveJoint := len(cc.AsV2().Changes) == 0
+
+				var failedCheck string
+				if alreadyPending {
+					failedCheck = fmt.Sprintf("possible unapplied conf change at index %d (applied to %d)", r.pendingConfIndex, r.raftLog.applied)
+				} else if alreadyJoint && !wantsLeaveJoint {
+					failedCheck = "must transition out of joint config first"
+				} else if !alreadyJoint && wantsLeaveJoint {
+					failedCheck = "not in joint state; refusing empty conf change"
+				}
+
+				if failedCheck != "" && !r.disableConfChangeValidation {
+					r.logger.Infof("%x ignoring conf change %v at config %s: %s", r.id, cc, r.trk.Config, failedCheck)
+					m.Entries[i] = pb.Entry{Type: pb.EntryNormal}
+				} else {
+					r.pendingConfIndex = r.raftLog.lastIndex() + uint64(i) + 1
+				}
+			}
+		}
+
+		if !r.appendEntry(m.Entries...) {
+			return ErrProposalDropped
+		}
+		r.bcastAppend()
+		return nil
 	case pb.MsgReadIndex:
 	case pb.MsgForgetLeader:
 		return nil // noop on leader
@@ -938,9 +996,77 @@ func (r *raft) sendAppend(to uint64) {
 	r.maybeSendAppend(to, true)
 }
 
+// maybeSendAppend sends an append RPC with new entries to the given peer,
+// if necessary. Returns true if a message was sent. The sendIfEmpty
+// argument controls whether messages with no entries will be sent
+// ("empty" messages are useful to convey updated Commit indexes, but
+// are undesirable when we're sending multiple messages in a batch).
 func (r *raft) maybeSendAppend(to uint64, sendIfEmpty bool) bool {
-	// TODO
-	return false
+	pr := r.trk.Progress[to]
+	//if pr.IsPaused() {
+	//	return false
+	//}
+
+	lastIndex, nextIndex := pr.Next-1, pr.Next
+	lastTerm, errt := r.raftLog.term(lastIndex)
+
+	var ents []pb.Entry
+	var erre error
+	// In a throttled StateReplicate only send empty MsgApp, to ensure progress.
+	// Otherwise, if we had a full Inflights and all inflight messages were in
+	// fact dropped, replication to that follower would stall. Instead, an empty
+	// MsgApp will eventually reach the follower (heartbeats responses prompt the
+	// leader to send an append), allowing it to be acked or rejected, both of
+	// which will clear out Inflights.
+	if pr.State != tracker.StateReplicate || !pr.Inflights.Full() {
+		ents, erre = r.raftLog.entries(nextIndex, r.maxMsgSize)
+	}
+
+	if len(ents) == 0 && !sendIfEmpty {
+		return false
+	}
+
+	if errt != nil || erre != nil { // send snapshot if we failed to get term or entries
+		if !pr.RecentActive {
+			r.logger.Debugf("ignore sending snapshot to %x since it is not recently active", to)
+			return false
+		}
+
+		snapshot, err := r.raftLog.snapshot()
+		if err != nil {
+			if err == ErrSnapshotTemporarilyUnavailable {
+				r.logger.Debugf("%x failed to send snapshot to %x because snapshot is temporarily unavailable", r.id, to)
+				return false
+			}
+			panic(err) // TODO(bdarnell)
+		}
+		if IsEmptySnap(snapshot) {
+			panic("need non-empty snapshot")
+		}
+		sindex, sterm := snapshot.Metadata.Index, snapshot.Metadata.Term
+		r.logger.Debugf("%x [firstindex: %d, commit: %d] sent snapshot[index: %d, term: %d] to %x [%s]",
+			r.id, r.raftLog.firstIndex(), r.raftLog.committed, sindex, sterm, to, pr)
+		pr.BecomeSnapshot(sindex)
+		r.logger.Debugf("%x paused sending replication messages to %x [%s]", r.id, to, pr)
+
+		r.send(pb.Message{To: to, Type: pb.MsgSnap, Snapshot: &snapshot})
+		return true
+	}
+
+	// Send the actual MsgApp otherwise, and update the progress accordingly.
+	if err := pr.UpdateOnEntriesSend(len(ents), uint64(payloadsSize(ents)), nextIndex); err != nil {
+		r.logger.Panicf("%x: %v", r.id, err)
+	}
+	// NB: pr has been updated, but we make sure to only use its old values below.
+	r.send(pb.Message{
+		To:      to,
+		Type:    pb.MsgApp,
+		Index:   lastIndex,
+		LogTerm: lastTerm,
+		Entries: ents,
+		Commit:  r.raftLog.committed,
+	})
+	return true
 }
 
 // maybeCommit attempts to advance the commit index. Returns true if
@@ -983,8 +1109,33 @@ func (r *raft) reset(term uint64) {
 }
 
 func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
-	// TODO
-
+	li := r.raftLog.lastIndex()
+	for i := range es {
+		es[i].Term = r.Term
+		es[i].Index = li + 1 + uint64(i)
+	}
+	// Track the size of this uncommitted proposal.
+	//if !r.increaseUncommittedSize(es) {
+	//	r.logger.Warningf(
+	//		"%x appending new entries to log would exceed uncommitted entry size limit; dropping proposal",
+	//		r.id,
+	//	)
+	//	// Drop the proposal.
+	//	return false
+	//}
+	// use latest "last" index after truncate/append
+	li = r.raftLog.append(es...)
+	// The leader needs to self-ack the entries just appended once they have
+	// been durably persisted (since it doesn't send an MsgApp to itself). This
+	// response message will be added to msgsAfterAppend and delivered back to
+	// this node after these entries have been written to stable storage. When
+	// handled, this is roughly equivalent to:
+	//
+	//  r.trk.Progress[r.id].MaybeUpdate(e.Index)
+	//  if r.maybeCommit() {
+	//  	r.bcastAppend()
+	//  }
+	r.send(pb.Message{To: r.id, Type: pb.MsgAppResp, Index: li})
 	return true
 }
 

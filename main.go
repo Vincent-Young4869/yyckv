@@ -12,7 +12,9 @@ import (
 // the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.
 
 func main() {
-	cluster := flag.String("cluster", "http://127.0.0.1:9000,http://127.0.0.1:9001", "comma separated cluster peers")
+	cluster := flag.String("cluster",
+		"http://127.0.0.1:9000,http://127.0.0.1:9001",
+		"comma separated cluster peers")
 	id := flag.Int("id", 1, "node ID")
 	kvport := flag.Int("port", 9000, "key-value server port")
 	join := flag.Bool("join", false, "join an existing cluster")
@@ -28,7 +30,13 @@ func main() {
 
 	var kvs *kv.Kvstore
 	getSnapshot := func() ([]byte, error) { return kvs.GetSnapshot() }
-	commitC, errorC, snapshotterReady := kv.NewRaftNode(*id, strings.Split(*cluster, ","), *join, getSnapshot, proposeC, confChangeC)
+	commitC, errorC, snapshotterReady := kv.NewRaftNode(
+		*id,
+		strings.Split(*cluster, ","),
+		*join,
+		getSnapshot,
+		proposeC,
+		confChangeC)
 	kvs = kv.NewKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 
 	serveHTTPKVAPI(kvs, *kvport, errorC)

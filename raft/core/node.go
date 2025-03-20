@@ -42,8 +42,9 @@ type Node interface {
 	// Campaign causes the Node to transition to candidate state and start campaigning to become leader.
 	Campaign(ctx context.Context) error
 
-	// Propose proposes that data be appended to the log.
-	//Propose(ctx context.Context, data []byte) error
+	// Propose proposes that data be appended to the log. Note that proposals can be lost without
+	// notice, therefore it is user's job to ensure proposal retries.
+	Propose(ctx context.Context, data []byte) error
 
 	// ProposeConfChange proposes config change.
 	// At most one ConfChange can be in the process of going through consensus.
@@ -164,7 +165,7 @@ func newNode(rn *RawNode) node {
 }
 
 func (n *node) run() {
-	var _ chan msgWithResult
+	var propc chan msgWithResult
 	var readyc chan Ready
 	var advancec chan struct{}
 	var rd Ready
@@ -186,16 +187,24 @@ func (n *node) run() {
 				} else {
 					r.logger.Infof("raft.node: %x changed leader from %x to %x at term %d", r.id, lead, r.lead, r.Term)
 				}
-				//propc = n.propc
+				propc = n.propc
 			} else {
 				r.logger.Infof("raft.node: %x lost leader %x at term %d", r.id, lead, r.Term)
-				//propc = nil
+				propc = nil
 			}
 			lead = r.lead
 		}
 
 		select {
-		//case pm := <-propc:
+		case pm := <-propc:
+			m := pm.m
+			m.From = r.id
+			// m is of type pb.MsgProp
+			err := r.Step(m)
+			if pm.result != nil {
+				pm.result <- err
+				close(pm.result)
+			}
 		case m := <-n.recvc:
 			if IsResponseMsg(m.Type) && !IsLocalMsgTarget(m.From) && r.trk.Progress[m.From] == nil {
 				// Filter out response message from unknown From.
@@ -319,6 +328,7 @@ func (n *node) stepWait(ctx context.Context, m pb.Message) error {
 // Step advances the state machine using msgs. The ctx.Err() will be returned,
 // if any.
 func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) error {
+	// If it's not a proposal, it's likely an internal Raft message (e.g., heartbeat, vote request)
 	if m.Type != pb.MsgProp {
 		select {
 		case n.recvc <- m:
@@ -329,6 +339,8 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 			return ErrStopped
 		}
 	}
+
+	// the logic to handle proposal message (key-value data manipulation)
 	ch := n.propc
 	pm := msgWithResult{m: m}
 	if wait {
