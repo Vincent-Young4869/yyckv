@@ -181,8 +181,8 @@ type raft struct {
 	// the log
 	raftLog *raftLog
 
-	//maxMsgSize         entryEncodingSize
-	//maxUncommittedSize entryPayloadSize
+	maxMsgSize         entryEncodingSize
+	maxUncommittedSize entryPayloadSize
 
 	trk tracker.ProgressTracker
 

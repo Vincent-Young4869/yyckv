@@ -69,23 +69,48 @@ func (m *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 }
 
 func (m *MemoryStorage) Term(i uint64) (uint64, error) {
-	//TODO implement me
-	panic("implement me")
+	m.Lock()
+	defer m.Unlock()
+	m.callStats.term++
+	offset := m.ents[0].Index
+	if i < offset {
+		return 0, ErrCompacted
+	}
+	if int(i-offset) >= len(m.ents) {
+		return 0, ErrUnavailable
+	}
+	return m.ents[i-offset].Term, nil
 }
 
 func (m *MemoryStorage) LastIndex() (uint64, error) {
-	//TODO implement me
-	//panic("implement me")
-	return 0, nil
+	m.Lock()
+	defer m.Unlock()
+	m.callStats.lastIndex++
+	return m.lastIndex(), nil
 }
 
+func (m *MemoryStorage) lastIndex() uint64 {
+	// The MemoryStorage can have a snapshot. The m.ents slice starts after the snapshot.
+	// m.ents[0].Index = snapshot.Metadata.Index.
+	return m.ents[0].Index + uint64(len(m.ents)) - 1
+}
+
+// FirstIndex implements the Storage interface.
 func (m *MemoryStorage) FirstIndex() (uint64, error) {
-	//TODO implement me
-	//panic("implement me")
-	return 0, nil
+	m.Lock()
+	defer m.Unlock()
+	m.callStats.firstIndex++
+	return m.firstIndex(), nil
 }
 
+func (m *MemoryStorage) firstIndex() uint64 {
+	return m.ents[0].Index + 1
+}
+
+// Snapshot implements the Storage interface.
 func (m *MemoryStorage) Snapshot() (pb.Snapshot, error) {
-	//TODO implement me
-	panic("implement me")
+	m.Lock()
+	defer m.Unlock()
+	m.callStats.snapshot++
+	return m.snapshot, nil
 }

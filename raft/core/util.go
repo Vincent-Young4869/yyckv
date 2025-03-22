@@ -86,6 +86,26 @@ func limitSize(ents []pb.Entry, maxSize entryEncodingSize) []pb.Entry {
 	return ents
 }
 
+// entryPayloadSize represents the size of one or more entries' payloads.
+// Notably, it does not depend on its Index or Term. Entries with empty
+// payloads, like those proposed after a leadership change, are considered
+// to be zero size.
+type entryPayloadSize uint64
+
+// payloadSize is the size of the payload of the provided entry.
+func payloadSize(e pb.Entry) entryPayloadSize {
+	return entryPayloadSize(len(e.Data))
+}
+
+// payloadsSize is the size of the payloads of the provided entries.
+func payloadsSize(ents []pb.Entry) entryPayloadSize {
+	var s entryPayloadSize
+	for _, e := range ents {
+		s += payloadSize(e)
+	}
+	return s
+}
+
 // extend appends vals to the given dst slice. It differs from the standard
 // slice append only in the way it allocates memory. If cap(dst) is not enough
 // for appending the values, precisely size len(dst)+len(vals) is allocated.
