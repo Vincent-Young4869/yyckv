@@ -69,8 +69,20 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 }
 
 func (rn *raftNode) startRaft() {
-	//oldwal := wal.Exist(rn.waldir)
+	//if !fileutil.Exist(rn.snapdir) {
+	//	if err := os.Mkdir(rn.snapdir, 0o750); err != nil {
+	//		log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
+	//	}
+	//}
+	//rn.snapshotter = snap.New(zap.NewExample(), rc.snapdir)
+	//
+	//oldwal := wal.Exist(rc.waldir)
 	oldwal := false
+	//rn.wal = rn.replayWAL()
+	rn.replayWAL()
+
+	// signal replay has finished
+	//rn.snapshotterReady <- rn.snapshotter
 
 	rpeers := make([]raftCore.Peer, len(rn.peers))
 	for i := range rpeers {
@@ -182,6 +194,28 @@ func (rc *raftNode) serveRaftHttp() {
 		log.Fatalf("raftexample: Failed to serve rafthttp (%v)", err)
 	}
 	close(rc.httpdonec)
+}
+
+// replayWAL replays WAL entries into the raft instance.
+// func (rc *raftNode) replayWAL() *wal.WAL {
+func (rn *raftNode) replayWAL() {
+	log.Printf("replaying WAL of member %d", rn.id)
+	//snapshot := rn.loadSnapshot()
+	//w := rn.openWAL(snapshot)
+	//_, st, ents, err := w.ReadAll()
+	//if err != nil {
+	//	log.Fatalf("raftexample: failed to read WAL (%v)", err)
+	//}
+	rn.raftStorage = raftCore.NewMemoryStorage()
+	//if snapshot != nil {
+	//	rn.raftStorage.ApplySnapshot(*snapshot)
+	//}
+	//rn.raftStorage.SetHardState(st)
+
+	// append to storage so raft starts at the right place in log
+	//rn.raftStorage.Append(ents)
+
+	//return w
 }
 
 func (rn *raftNode) writeError(err error) {

@@ -58,9 +58,17 @@ type MemoryStorage struct {
 	callStats inMemStorageCallStats
 }
 
+// NewMemoryStorage creates an empty MemoryStorage.
+func NewMemoryStorage() *MemoryStorage {
+	return &MemoryStorage{
+		// When starting from scratch populate the list with a dummy entry at term zero.
+		ents: make([]pb.Entry, 1),
+	}
+}
+
 func (m *MemoryStorage) InitialState() (pb.HardState, pb.ConfState, error) {
-	//TODO implement me
-	panic("implement me")
+	m.callStats.initialState++
+	return m.hardState, m.snapshot.Metadata.ConfState, nil
 }
 
 func (m *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
