@@ -52,7 +52,9 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 	errorC := make(chan error)
 
 	rn := &raftNode{
+		proposeC:    proposeC,
 		confChangeC: confChangeC,
+		commitC:     commitC,
 		errorC:      errorC,
 		id:          id,
 		peers:       peers,
