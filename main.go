@@ -30,14 +30,16 @@ func main() {
 
 	var kvs *kv.Kvstore
 	getSnapshot := func() ([]byte, error) { return kvs.GetSnapshot() }
-	commitC, errorC, _ := kv.NewRaftNode(
+	commitC, errorC, snapshotterReadyChannel := kv.NewRaftNode(
 		*id,
 		strings.Split(*cluster, ","),
 		*join,
 		getSnapshot,
 		proposeC,
 		confChangeC)
-	kvs = kv.NewKVStore(proposeC, commitC, errorC)
+	// block until snapshotter (from bootstrap process) is ready
+	snapshotter := <-snapshotterReadyChannel
+	kvs = kv.NewKVStore(snapshotter, proposeC, commitC, errorC)
 
 	serveHTTPKVAPI(kvs, *kvport, errorC)
 }

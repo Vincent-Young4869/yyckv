@@ -27,15 +27,19 @@ type raftNode struct {
 	commitC     chan<- *commit           // entries committed to log (k,v)
 	errorC      chan<- error             // errors from raft session
 
-	id    int      // client ID for raft session
-	peers []string // raft peer URLs
-	join  bool     // node is joining an existing cluster
+	id      int      // client ID for raft session
+	peers   []string // raft peer URLs
+	join    bool     // node is joining an existing cluster
+	snapdir string   // path to snapshot directory
 
 	confState raftpb.ConfState
 
 	// raft backing for the commit/error channel
 	node        raftCore.Node
 	raftStorage *raftCore.MemoryStorage
+
+	snapshotter      *snap.Snapshotter
+	snapshotterReady chan *snap.Snapshotter // signals when snapshotter is ready
 
 	transport *raftHttp.Transport
 	stopc     chan struct{} // signals proposal channel closed
@@ -65,9 +69,11 @@ func NewRaftNode(id int, peers []string, join bool, getSnapshot func() ([]byte, 
 		httpdonec: make(chan struct{}),
 
 		logger: logger.CreateZapLogger(),
+
+		snapshotterReady: make(chan *snap.Snapshotter, 1),
 	}
 	go rn.startRaft()
-	return commitC, errorC, nil
+	return commitC, errorC, rn.snapshotterReady
 }
 
 func (rn *raftNode) startRaft() {
@@ -76,7 +82,7 @@ func (rn *raftNode) startRaft() {
 	//		log.Fatalf("raftexample: cannot create dir for snapshot (%v)", err)
 	//	}
 	//}
-	//rn.snapshotter = snap.New(zap.NewExample(), rc.snapdir)
+	rn.snapshotter = snap.New(zap.NewExample(), rn.snapdir)
 	//
 	//oldwal := wal.Exist(rc.waldir)
 	oldwal := false
@@ -84,7 +90,7 @@ func (rn *raftNode) startRaft() {
 	rn.replayWAL()
 
 	// signal replay has finished
-	//rn.snapshotterReady <- rn.snapshotter
+	rn.snapshotterReady <- rn.snapshotter
 
 	rpeers := make([]raftCore.Peer, len(rn.peers))
 	for i := range rpeers {

@@ -21,12 +21,12 @@ type kv struct {
 	Val string
 }
 
-func NewKVStore(proposeC chan<- string,
+func NewKVStore(snapshotter *snap.Snapshotter, proposeC chan<- string,
 	commitC <-chan *commit, errorC <-chan error) *Kvstore {
 	s := &Kvstore{
-		proposeC: proposeC,
-		data:     make(map[string]string),
-		//snapshotter: snapshotter,
+		proposeC:    proposeC,
+		data:        make(map[string]string),
+		snapshotter: snapshotter,
 	}
 	go s.readCommits(commitC, errorC)
 	return s
