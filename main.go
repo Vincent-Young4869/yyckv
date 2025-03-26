@@ -18,7 +18,7 @@ func main() {
 	id := flag.Int("id", 1, "node ID")
 	kvport := flag.Int("port", 9000, "key-value server port")
 	join := flag.Bool("join", false, "join an existing cluster")
-	loggingLevel := flag.String("loggingLevel", "debug", "log level")
+	loggingLevel := flag.String("loggingLevel", "info", "log level")
 	flag.Parse()
 
 	logger.InitLoggerLevel(*loggingLevel)

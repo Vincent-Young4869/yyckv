@@ -228,17 +228,17 @@ func (rn *raftNode) writeError(err error) {
 }
 
 // stop closes http, closes all channels, and stops raft.
-func (rc *raftNode) stop() {
-	rc.stopHTTP()
-	//close(rc.commitC)
-	close(rc.errorC)
-	rc.node.Stop()
+func (rn *raftNode) stop() {
+	rn.stopHTTP()
+	close(rn.commitC)
+	close(rn.errorC)
+	rn.node.Stop()
 }
 
-func (rc *raftNode) stopHTTP() {
-	rc.transport.Stop()
-	close(rc.httpstopc)
-	<-rc.httpdonec
+func (rn *raftNode) stopHTTP() {
+	rn.transport.Stop()
+	close(rn.httpstopc)
+	<-rn.httpdonec
 }
 
 // Implement the transport.Raft interface:
