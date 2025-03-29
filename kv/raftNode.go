@@ -172,7 +172,14 @@ func (rn *raftNode) serveChannels() {
 		case <-ticker.C:
 			rn.node.Tick()
 		case rd := <-rn.node.Ready():
-			rn.transport.Send(rd.Messages)
+			rn.raftStorage.Append(rd.Entries)
+			rn.transport.Send(rn.processMessages(rd.Messages))
+			applyDoneC, ok := rn.publishEntries(rn.entriesToApply(rd.CommittedEntries))
+			if !ok {
+				rn.stop()
+				return
+			}
+			//rn.maybeTriggerSnapshot(applyDoneC)
 			rn.node.Advance()
 		case err := <-rn.transport.ErrorC:
 			rn.writeError(err)

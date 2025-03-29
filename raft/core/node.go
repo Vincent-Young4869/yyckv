@@ -343,9 +343,6 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 	// the logic to handle proposal message (key-value data manipulation)
 	ch := n.propc
 	pm := msgWithResult{m: m}
-	if wait {
-		pm.result = make(chan error, 1)
-	}
 	select {
 	case ch <- pm:
 		if !wait {
@@ -355,6 +352,10 @@ func (n *node) stepWithWaitOption(ctx context.Context, m pb.Message, wait bool) 
 		return ctx.Err()
 	case <-n.done:
 		return ErrStopped
+	}
+
+	if wait {
+		pm.result = make(chan error, 1)
 	}
 	select {
 	// if wait=true, it will block until there's result written into this channel
