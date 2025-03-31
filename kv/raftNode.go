@@ -32,7 +32,8 @@ type raftNode struct {
 	join    bool     // node is joining an existing cluster
 	snapdir string   // path to snapshot directory
 
-	confState raftpb.ConfState
+	confState    raftpb.ConfState
+	appliedIndex uint64
 
 	// raft backing for the commit/error channel
 	node        raftCore.Node
@@ -84,7 +85,7 @@ func (rn *raftNode) startRaft() {
 	//}
 	rn.snapshotter = snap.New(zap.NewExample(), rn.snapdir)
 	//
-	//oldwal := wal.Exist(rc.waldir)
+	//oldwal := wal.Exist(rn.waldir)
 	oldwal := false
 	//rn.wal = rn.replayWAL()
 	rn.replayWAL()
@@ -119,7 +120,7 @@ func (rn *raftNode) startRaft() {
 		ClusterID: 0x1000,
 		Raft:      rn,
 		//ServerStats: stats.NewServerStats("", ""),
-		//LeaderStats: stats.NewLeaderStats(zap.NewExample(), strconv.Itoa(rn.id)),
+		//LeaderStats: stats.NewLeaderStats(zap.NewExample(), strnonv.Itoa(rn.id)),
 		ErrorC: make(chan error),
 	}
 
@@ -179,7 +180,7 @@ func (rn *raftNode) serveChannels() {
 				rn.stop()
 				return
 			}
-			//rn.maybeTriggerSnapshot(applyDoneC)
+			rn.maybeTriggerSnapshot(applyDoneC)
 			rn.node.Advance()
 		case err := <-rn.transport.ErrorC:
 			rn.writeError(err)
@@ -191,28 +192,111 @@ func (rn *raftNode) serveChannels() {
 	}
 }
 
-func (rc *raftNode) serveRaftHttp() {
-	url, err := url.Parse(rc.peers[rc.id-1])
+func (rn *raftNode) serveRaftHttp() {
+	url, err := url.Parse(rn.peers[rn.id-1])
 	if err != nil {
 		log.Fatalf("kvRaftNode: Failed parsing URL (%v)", err)
 	}
 
-	ln, err := newStoppableListener(url.Host, rc.httpstopc)
+	ln, err := newStoppableListener(url.Host, rn.httpstopc)
 	if err != nil {
 		log.Fatalf("kvRaftNode: Failed to listen rafthttp (%v)", err)
 	}
 
-	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln)
+	err = (&http.Server{Handler: rn.transport.Handler()}).Serve(ln)
 	select {
-	case <-rc.httpstopc:
+	case <-rn.httpstopc:
 	default:
 		log.Fatalf("raftexample: Failed to serve rafthttp (%v)", err)
 	}
-	close(rc.httpdonec)
+	close(rn.httpdonec)
+}
+
+// When there is a `raftpb.EntryConfChange` after creating the snapshot,
+// then the confState included in the snapshot is out of date. so We need
+// to update the confState before sending a snapshot to a follower.
+func (rn *raftNode) processMessages(ms []raftpb.Message) []raftpb.Message {
+	for i := 0; i < len(ms); i++ {
+		if ms[i].Type == raftpb.MsgSnap {
+			ms[i].Snapshot.Metadata.ConfState = rn.confState
+		}
+	}
+	return ms
+}
+
+func (rn *raftNode) maybeTriggerSnapshot(applyDoneC <-chan struct{}) {
+	// TODO: implement this
+}
+
+func (rn *raftNode) entriesToApply(ents []raftpb.Entry) (nents []raftpb.Entry) {
+	if len(ents) == 0 {
+		return ents
+	}
+	firstIdx := ents[0].Index
+	if firstIdx > rn.appliedIndex+1 {
+		log.Fatalf("first index of committed entry[%d] should <= progress.appliedIndex[%d]+1", firstIdx, rn.appliedIndex)
+	}
+	if rn.appliedIndex-firstIdx+1 < uint64(len(ents)) {
+		nents = ents[rn.appliedIndex-firstIdx+1:]
+	}
+	return nents
+}
+
+// publishEntries writes committed log entries to commit channel and returns
+// whether all entries could be published.
+func (rn *raftNode) publishEntries(ents []raftpb.Entry) (<-chan struct{}, bool) {
+	if len(ents) == 0 {
+		return nil, true
+	}
+
+	data := make([]string, 0, len(ents))
+	for i := range ents {
+		switch ents[i].Type {
+		case raftpb.EntryNormal:
+			if len(ents[i].Data) == 0 {
+				// ignore empty messages
+				break
+			}
+			s := string(ents[i].Data)
+			data = append(data, s)
+		case raftpb.EntryConfChange:
+			var cc raftpb.ConfChange
+			cc.Unmarshal(ents[i].Data)
+			rn.confState = *rn.node.ApplyConfChange(cc)
+			switch cc.Type {
+			case raftpb.ConfChangeAddNode:
+				if len(cc.Context) > 0 {
+					rn.transport.AddPeer(raftModel.ID(cc.NodeID), []string{string(cc.Context)})
+				}
+			case raftpb.ConfChangeRemoveNode:
+				if cc.NodeID == uint64(rn.id) {
+					log.Println("I've been removed from the cluster! Shutting down.")
+					return nil, false
+				}
+				rn.transport.RemovePeer(raftModel.ID(cc.NodeID))
+			}
+		}
+	}
+
+	var applyDoneC chan struct{}
+
+	if len(data) > 0 {
+		applyDoneC = make(chan struct{}, 1)
+		select {
+		case rn.commitC <- &commit{data, applyDoneC}:
+		case <-rn.stopc:
+			return nil, false
+		}
+	}
+
+	// after commit, update appliedIndex
+	rn.appliedIndex = ents[len(ents)-1].Index
+
+	return applyDoneC, true
 }
 
 // replayWAL replays WAL entries into the raft instance.
-// func (rc *raftNode) replayWAL() *wal.WAL {
+// func (rn *raftNode) replayWAL() *wal.WAL {
 func (rn *raftNode) replayWAL() {
 	log.Printf("replaying WAL of member %d", rn.id)
 	//snapshot := rn.loadSnapshot()
@@ -256,10 +340,10 @@ func (rn *raftNode) stopHTTP() {
 
 // Implement the transport.Raft interface:
 
-func (rc *raftNode) Process(ctx context.Context, m raftpb.Message) error {
-	return rc.node.Step(ctx, m)
+func (rn *raftNode) Process(ctx context.Context, m raftpb.Message) error {
+	return rn.node.Step(ctx, m)
 }
 
-func (rc *raftNode) IsIDRemoved(_ uint64) bool { return false }
+func (rn *raftNode) IsIDRemoved(_ uint64) bool { return false }
 
-func (rc *raftNode) ReportUnreachable(id uint64) { rc.node.ReportUnreachable(id) }
+func (rn *raftNode) ReportUnreachable(id uint64) { rn.node.ReportUnreachable(id) }

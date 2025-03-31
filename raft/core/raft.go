@@ -623,9 +623,9 @@ func stepFollower(r *raft, m pb.Message) error {
 		m.To = r.lead
 		r.send(m)
 	case pb.MsgApp:
-		//r.electionElapsed = 0
-		//r.lead = m.From
-		//r.handleAppendEntries(m)
+		r.electionElapsed = 0
+		r.lead = m.From
+		r.handleAppendEntries(m)
 	case pb.MsgHeartbeat:
 		r.electionElapsed = 0
 		r.lead = m.From
@@ -671,6 +671,46 @@ func stepFollower(r *raft, m pb.Message) error {
 		r.readStates = append(r.readStates, ReadState{Index: m.Index, RequestCtx: m.Entries[0].Data})
 	}
 	return nil
+}
+
+func (r *raft) handleAppendEntries(m pb.Message) {
+	if m.Index < r.raftLog.committed {
+		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed})
+		return
+	}
+	if mlastIndex, ok := r.raftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...); ok {
+		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: mlastIndex})
+		return
+	}
+	r.logger.Debugf("%x [logterm: %d, index: %d] rejected MsgApp [logterm: %d, index: %d] from %x",
+		r.id, r.raftLog.zeroTermOnOutOfBounds(r.raftLog.term(m.Index)), m.Index, m.LogTerm, m.Index, m.From)
+
+	// Our log does not match the leader's at index m.Index. Return a hint to the
+	// leader - a guess on the maximal (index, term) at which the logs match. Do
+	// this by searching through the follower's log for the maximum (index, term)
+	// pair with a term <= the MsgApp's LogTerm and an index <= the MsgApp's
+	// Index. This can help skip all indexes in the follower's uncommitted tail
+	// with terms greater than the MsgApp's LogTerm.
+	//
+	// See the other caller for findConflictByTerm (in stepLeader) for a much more
+	// detailed explanation of this mechanism.
+
+	// NB: m.Index >= raftLog.committed by now (see the early return above), and
+	// raftLog.lastIndex() >= raftLog.committed by invariant, so min of the two is
+	// also >= raftLog.committed. Hence, the findConflictByTerm argument is within
+	// the valid interval, which then will return a valid (index, term) pair with
+	// a non-zero term (unless the log is empty). However, it is safe to send a zero
+	// LogTerm in this response in any case, so we don't verify it here.
+	hintIndex := min(m.Index, r.raftLog.lastIndex())
+	hintIndex, hintTerm := r.raftLog.findConflictByTerm(hintIndex, m.LogTerm)
+	r.send(pb.Message{
+		To:         m.From,
+		Type:       pb.MsgAppResp,
+		Index:      m.Index,
+		Reject:     true,
+		RejectHint: hintIndex,
+		LogTerm:    hintTerm,
+	})
 }
 
 func (r *raft) handleHeartbeat(m pb.Message) {

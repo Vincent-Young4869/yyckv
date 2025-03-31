@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"sync"
+	logger "yyckv/raft/log"
 	pb "yyckv/raft/raftpb"
 )
 
@@ -121,4 +122,42 @@ func (m *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 	defer m.Unlock()
 	m.callStats.snapshot++
 	return m.snapshot, nil
+}
+
+// Append the new entries to storage.
+// TODO: ensure the entries are continuous and
+// entries[0].Index > ms.entries[0].Index
+func (ms *MemoryStorage) Append(entries []pb.Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	ms.Lock()
+	defer ms.Unlock()
+
+	first := ms.firstIndex()
+	last := entries[0].Index + uint64(len(entries)) - 1
+
+	// shortcut if there is no new entry.
+	if last < first {
+		return nil
+	}
+	// truncate compacted entries
+	if first > entries[0].Index {
+		entries = entries[first-entries[0].Index:]
+	}
+
+	offset := entries[0].Index - ms.ents[0].Index
+	switch {
+	case uint64(len(ms.ents)) > offset:
+		// NB: full slice expression protects ms.ents at index >= offset from
+		// rewrites, as they may still be referenced from outside MemoryStorage.
+		ms.ents = append(ms.ents[:offset:offset], entries...)
+	case uint64(len(ms.ents)) == offset:
+		ms.ents = append(ms.ents, entries...)
+	default:
+		logger.GetLogger().Panicf("missing log entry [last: %d, append at: %d]",
+			ms.lastIndex(), entries[0].Index)
+	}
+	return nil
 }

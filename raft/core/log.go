@@ -138,6 +138,33 @@ func (l *raftLog) findConflict(ents []pb.Entry) uint64 {
 	return 0
 }
 
+// findConflictByTerm returns a best guess on where this log ends matching
+// another log, given that the only information known about the other log is the
+// (index, term) of its single entry.
+//
+// Specifically, the first returned value is the max guessIndex <= index, such
+// that term(guessIndex) <= term or term(guessIndex) is not known (because this
+// index is compacted or not yet stored).
+//
+// The second returned value is the term(guessIndex), or 0 if it is unknown.
+//
+// This function is used by a follower and leader to resolve log conflicts after
+// an unsuccessful append to a follower, and ultimately restore the steady flow
+// of appends.
+func (l *raftLog) findConflictByTerm(index uint64, term uint64) (uint64, uint64) {
+	for ; index > 0; index-- {
+		// If there is an error (likely ErrCompacted or ErrUnavailable), we don't
+		// know whether it's a match or not, so assume a possible match and return
+		// the index, with 0 term indicating an unknown term.
+		if ourTerm, err := l.term(index); err != nil {
+			return index, 0
+		} else if ourTerm <= term {
+			return index, ourTerm
+		}
+	}
+	return 0, 0
+}
+
 func (l *raftLog) firstIndex() uint64 {
 	if i, ok := l.unstable.maybeFirstIndex(); ok {
 		return i
