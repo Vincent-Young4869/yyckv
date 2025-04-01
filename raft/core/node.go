@@ -212,7 +212,38 @@ func (n *node) run() {
 			}
 			r.Step(m)
 		case cc := <-n.confc:
-			r.logger.Infof("TODO: cc := <-n.confc...", cc)
+			_, okBefore := r.trk.Progress[r.id]
+			cs := r.applyConfChange(cc)
+			// If the node was removed, block incoming proposals. Note that we
+			// only do this if the node was in the config before. Nodes may be
+			// a member of the group without knowing this (when they're catching
+			// up on the log and don't have the latest config) and we don't want
+			// to block the proposal channel in that case.
+			//
+			// NB: propc is reset when the leader changes, which, if we learn
+			// about it, sort of implies that we got readded, maybe? This isn't
+			// very sound and likely has bugs.
+			if _, okAfter := r.trk.Progress[r.id]; okBefore && !okAfter {
+				var found bool
+				for _, sl := range [][]uint64{cs.Voters, cs.VotersOutgoing} {
+					for _, id := range sl {
+						if id == r.id {
+							found = true
+							break
+						}
+					}
+					if found {
+						break
+					}
+				}
+				if !found {
+					propc = nil
+				}
+			}
+			select {
+			case n.confstatec <- cs:
+			case <-n.done:
+			}
 		case <-n.tickc:
 			n.rn.Tick()
 		case readyc <- rd:
@@ -251,8 +282,16 @@ func (n *node) ProposeConfChange(ctx context.Context, cc pb.ConfChange) error {
 }
 
 func (n *node) ApplyConfChange(cc pb.ConfChange) *pb.ConfState {
-	//TODO implement me
-	panic("implement me")
+	var cs pb.ConfState
+	select {
+	case n.confc <- cc.AsV2():
+	case <-n.done:
+	}
+	select {
+	case cs = <-n.confstatec:
+	case <-n.done:
+	}
+	return &cs
 }
 
 func (n *node) Campaign(ctx context.Context) error { return n.step(ctx, pb.Message{Type: pb.MsgHup}) }

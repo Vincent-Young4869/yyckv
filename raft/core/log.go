@@ -165,6 +165,68 @@ func (l *raftLog) findConflictByTerm(index uint64, term uint64) (uint64, uint64)
 	return 0, 0
 }
 
+// nextUnstableEnts returns all entries that are available to be written to the
+// local stable log and are not already in-progress.
+func (l *raftLog) nextUnstableEnts() []pb.Entry {
+	return l.unstable.nextEntries()
+}
+
+// hasNextUnstableEnts returns if there are any entries that are available to be
+// written to the local stable log and are not already in-progress.
+func (l *raftLog) hasNextUnstableEnts() bool {
+	return len(l.nextUnstableEnts()) > 0
+}
+
+// hasNextOrInProgressUnstableEnts returns if there are any entries that are
+// available to be written to the local stable log or in the process of being
+// written to the local stable log.
+func (l *raftLog) hasNextOrInProgressUnstableEnts() bool {
+	return len(l.unstable.entries) > 0
+}
+
+// nextCommittedEnts returns all the available entries for execution.
+// Entries can be committed even when the local raft instance has not durably
+// appended them to the local raft log yet. If allowUnstable is true, committed
+// entries from the unstable log may be returned; otherwise, only entries known
+// to reside locally on stable storage will be returned.
+func (l *raftLog) nextCommittedEnts(allowUnstable bool) (ents []pb.Entry) {
+	if l.applyingEntsPaused {
+		// Entry application outstanding size limit reached.
+		return nil
+	}
+	//if l.hasNextOrInProgressSnapshot() {
+	//	// See comment in hasNextCommittedEnts.
+	//	return nil
+	//}
+	lo, hi := l.applying+1, l.maxAppliableIndex(allowUnstable)+1 // [lo, hi)
+	if lo >= hi {
+		// Nothing to apply.
+		return nil
+	}
+	maxSize := l.maxApplyingEntsSize - l.applyingEntsSize
+	if maxSize <= 0 {
+		l.logger.Panicf("applying entry size (%d-%d)=%d not positive",
+			l.maxApplyingEntsSize, l.applyingEntsSize, maxSize)
+	}
+	ents, err := l.slice(lo, hi, maxSize)
+	if err != nil {
+		l.logger.Panicf("unexpected error when getting unapplied entries (%v)", err)
+	}
+	return ents
+}
+
+// maxAppliableIndex returns the maximum committed index that can be applied.
+// If allowUnstable is true, committed entries from the unstable log can be
+// applied; otherwise, only entries known to reside locally on stable storage
+// can be applied.
+func (l *raftLog) maxAppliableIndex(allowUnstable bool) uint64 {
+	hi := l.committed
+	if !allowUnstable {
+		hi = min(hi, l.unstable.offset-1)
+	}
+	return hi
+}
+
 func (l *raftLog) firstIndex() uint64 {
 	if i, ok := l.unstable.maybeFirstIndex(); ok {
 		return i

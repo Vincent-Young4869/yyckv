@@ -95,9 +95,9 @@ func (rn *RawNode) readyWithoutAccept() Ready {
 	r := rn.raft
 
 	rd := Ready{
-		//Entries:          r.raftLog.nextUnstableEnts(),
-		//CommittedEntries: r.raftLog.nextCommittedEnts(rn.applyUnstableEntries()),
-		Messages: r.msgs,
+		Entries:          r.raftLog.nextUnstableEnts(),
+		CommittedEntries: r.raftLog.nextCommittedEnts(rn.applyUnstableEntries()),
+		Messages:         r.msgs,
 	}
 
 	// TODO
@@ -162,6 +162,13 @@ func (rn *RawNode) acceptReady(rd Ready) {
 		//index := ents[len(ents)-1].Index
 		//rn.raft.raftLog.acceptApplying(index, entsSize(ents), rn.applyUnstableEntries())
 	}
+}
+
+// applyUnstableEntries returns whether entries are allowed to be applied once
+// they are known to be committed but before they have been written locally to
+// stable storage.
+func (rn *RawNode) applyUnstableEntries() bool {
+	return !rn.asyncStorageWrites
 }
 
 func (rn *RawNode) Advance(_ Ready) {

@@ -66,6 +66,16 @@ func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 	return u.entries[i-u.offset].Term, true
 }
 
+// nextEntries returns the unstable entries that are not already in the process
+// of being written to storage.
+func (u *unstable) nextEntries() []pb.Entry {
+	inProgress := int(u.offsetInProgress - u.offset)
+	if len(u.entries) == inProgress {
+		return nil
+	}
+	return u.entries[inProgress:]
+}
+
 func (u *unstable) truncateAndAppend(ents []pb.Entry) {
 	fromIndex := ents[0].Index
 	switch {
