@@ -30,6 +30,20 @@ func (pr *Progress) ResetState(state StateType) {
 // ProgressMap is a map of *Progress.
 type ProgressMap map[uint64]*Progress
 
+func (pr *Progress) BecomeProbe() {
+	// If the original state is StateSnapshot, progress knows that
+	// the pending snapshot has been sent to this peer successfully, then
+	// probes from pendingSnapshot + 1.
+	if pr.State == StateSnapshot {
+		pendingSnapshot := pr.PendingSnapshot
+		pr.ResetState(StateProbe)
+		pr.Next = max(pr.Match+1, pendingSnapshot+1)
+	} else {
+		pr.ResetState(StateProbe)
+		pr.Next = pr.Match + 1
+	}
+}
+
 // BecomeReplicate transitions into StateReplicate, resetting Next to Match+1.
 func (pr *Progress) BecomeReplicate() {
 	pr.ResetState(StateReplicate)
@@ -61,4 +75,28 @@ func (pr *Progress) UpdateOnEntriesSend(entries int, bytes, nextIndex uint64) er
 		return fmt.Errorf("sending append in unhandled state %s", pr.State)
 	}
 	return nil
+}
+
+func (pr *Progress) MaybeUpdate(n uint64) bool {
+	var updated bool
+	if pr.Match < n {
+		pr.Match = n
+		updated = true
+		pr.MsgAppFlowPaused = false
+	}
+	pr.Next = max(pr.Next, n+1)
+	return updated
+}
+
+func (pr *Progress) IsPaused() bool {
+	switch pr.State {
+	case StateProbe:
+		return pr.MsgAppFlowPaused
+	case StateReplicate:
+		return pr.MsgAppFlowPaused
+	case StateSnapshot:
+		return true
+	default:
+		panic("unexpected state")
+	}
 }

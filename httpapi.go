@@ -46,7 +46,7 @@ func (h *httpKVAPI) handleDataRequest(w http.ResponseWriter, r *http.Request) {
 		if v, ok := h.kv.Lookup(key); ok {
 			w.Write([]byte(v))
 		} else {
-			http.Error(w, "Failed to GET", http.StatusNotFound)
+			http.Error(w, "Failed to GET, probably the given key does not exist", http.StatusNotFound)
 		}
 	case http.MethodDelete:
 		fmt.Printf("DELETE key=%s\n", key)

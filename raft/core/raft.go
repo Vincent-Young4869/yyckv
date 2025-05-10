@@ -887,6 +887,73 @@ func stepLeader(r *raft, m pb.Message) error {
 	}
 	switch m.Type {
 	case pb.MsgAppResp:
+		// NB: this code path is also hit from (*raft).advance, where the leader steps
+		// an MsgAppResp to acknowledge the appended entries in the last Ready.
+
+		pr.RecentActive = true
+
+		if m.Reject {
+			// TODO:
+		} else {
+			oldPaused := pr.IsPaused()
+			// We want to update our tracking if the response updates our
+			// matched index or if the response can move a probing peer back
+			// into StateReplicate (see heartbeat_rep_recovers_from_probing.txt
+			// for an example of the latter case).
+			// NB: the same does not make sense for StateSnapshot - if `m.Index`
+			// equals pr.Match we know we don't m.Index+1 in our log, so moving
+			// back to replicating state is not useful; besides pr.PendingSnapshot
+			// would prevent it.
+			if pr.MaybeUpdate(m.Index) || (pr.Match == m.Index && pr.State == tracker.StateProbe) {
+				switch {
+				case pr.State == tracker.StateProbe:
+					pr.BecomeReplicate()
+				case pr.State == tracker.StateSnapshot && pr.Match+1 >= r.raftLog.firstIndex():
+					// Note that we don't take into account PendingSnapshot to
+					// enter this branch. No matter at which index a snapshot
+					// was actually applied, as long as this allows catching up
+					// the follower from the log, we will accept it. This gives
+					// systems more flexibility in how they implement snapshots;
+					// see the comments on PendingSnapshot.
+					r.logger.Debugf("%x recovered from needing snapshot, resumed sending replication messages to %x [%s]", r.id, m.From, pr)
+					// Transition back to replicating state via probing state
+					// (which takes the snapshot into account). If we didn't
+					// move to replicating state, that would only happen with
+					// the next round of appends (but there may not be a next
+					// round for a while, exposing an inconsistent RaftStatus).
+					pr.BecomeProbe()
+					pr.BecomeReplicate()
+				case pr.State == tracker.StateReplicate:
+					//pr.Inflights.FreeLE(m.Index)
+				}
+
+				if r.maybeCommit() {
+					// committed index has progressed for the term, so it is safe
+					// to respond to pending read index requests
+					//releasePendingReadIndexMessages(r)
+					r.bcastAppend()
+				} else if oldPaused {
+					// If we were paused before, this node may be missing the
+					// latest commit index, so send it.
+					r.sendAppend(m.From)
+				}
+				// We've updated flow control information above, which may
+				// allow us to send multiple (size-limited) in-flight messages
+				// at once (such as when transitioning from probe to
+				// replicate, or when freeTo() covers multiple messages). If
+				// we have more entries to send, send as many messages as we
+				// can (without sending empty messages for the commit index)
+				if r.id != m.From {
+					for r.maybeSendAppend(m.From, false /* sendIfEmpty */) {
+					}
+				}
+				// Transfer leadership is in progress.
+				//if m.From == r.leadTransferee && pr.Match == r.raftLog.lastIndex() {
+				//	r.logger.Infof("%x sent MsgTimeoutNow to %x after received MsgAppResp", r.id, m.From)
+				//	r.sendTimeoutNow(m.From)
+				//}
+			}
+		}
 	case pb.MsgHeartbeatResp:
 	case pb.MsgSnapStatus:
 	case pb.MsgUnreachable:
